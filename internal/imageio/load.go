@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	// format specific packages to register decoders for images
 	_ "image/jpeg"
@@ -50,4 +53,31 @@ func LoadGray(path string) ([]float32, int, int, error) {
 	}
 
 	return pix, w, h, nil
+}
+
+/*
+This function is responsible for loading all
+the images in a directory and returns the
+sorted image paths. WE IGNORE SUB-DIRS
+*/
+func ListImages(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" {
+			out = append(out, filepath.Join(dir, name))
+		}
+	}
+
+	sort.Strings(out)
+	return out, nil
 }

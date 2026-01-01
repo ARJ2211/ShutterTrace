@@ -33,3 +33,6 @@ go.work.sum
 
 # generated binary
 ShutterTrace
+
+# datasets directory
+datasets
