@@ -1,13 +1,19 @@
-prnu/
+# ShutterTrace
 
--   cmd/prnu/main.go
--   internal/cli/usage.go
--   internal/store/store.go
--   internal/store/meta.go
--   internal/imageio/load.go
--   internal/denoise/denoise.go
--   internal/fingerprint/fingerprint.go
--   internal/metrics/metrics.go
--   Makefile
--   .gitignore
--   README.md
+PRNU-based camera fingerprint experiments in Go.
+
+Commands:
+prnu enroll --camera <id> --in <folder> [--out <db>]
+prnu verify --camera <id> --db <db> --img <path>
+
+Current status:
+Repo skeleton + CLI + meta storage.
+Next steps:
+
+-   image loading
+-   denoise + residual
+-   fingerprint estimation
+-   correlation + PCE
+
+Goal:
+Understand PRNU limits while learning Go systems-style code.
