@@ -29,8 +29,8 @@ func LoadGray(path string) ([]float32, int, int, error) {
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	b := img.Bounds()
-	w, h := b.Dx(), b.Dy()
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
 	if w <= 0 || h <= 0 {
 		return nil, 0, 0, fmt.Errorf(
 			"invalid image bounds detected: %dx%d", w, h)
@@ -40,14 +40,14 @@ func LoadGray(path string) ([]float32, int, int, error) {
 
 	for y := range h {
 		for x := range w {
-			pixel := img.At(x, y)
-			r, g, b, _ := pixel.RGBA()
+			pixel := img.At(bounds.Min.X+x, bounds.Min.Y+y)
+			r, g, bl, _ := pixel.RGBA()
 
-			var rf float32 = float32(r / 65545.0)
-			var gf float32 = float32(g / 65545.0)
-			var bf float32 = float32(b / 65545.0)
+			rf := float32(r) / 65535.0
+			gf := float32(g) / 65535.0
+			bf := float32(bl) / 65535.0
 
-			var gray float32 = (0.299 * rf) + (0.587 * gf) + (0.114 * bf)
+			gray := float32(0.299)*rf + float32(0.587)*gf + float32(0.114)*bf
 			pix[y*w+x] = gray
 		}
 	}
