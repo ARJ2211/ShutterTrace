@@ -10,10 +10,10 @@ import (
 func findAnyImage(t *testing.T) string {
 	t.Helper()
 
-	root := "datasets"
+	root := filepath.Join("..", "..", "datasets")
 	_, err := os.Stat(root)
 	if err != nil {
-		t.Skip("datasets/ folder not found, skipping imageio tests")
+		t.Skip("datasets/ folder not found, skipping imageio tests " + err.Error())
 		return ""
 	}
 
