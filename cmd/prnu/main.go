@@ -239,6 +239,21 @@ func main() {
 			mode = "center-crop"
 		}
 
+		tileCap := 2048
+		if cw > tileCap {
+			cw = tileCap
+		}
+		if ch > tileCap {
+			ch = tileCap
+		}
+
+		if mode == "exact" && (cw != enW || ch != enH) {
+			mode = "exact-tile"
+		}
+		if mode == "center-crop" && (cw != minInt(enW, w) || ch != minInt(enH, h)) {
+			mode = "center-crop-tile"
+		}
+
 		p.UpdateMessage(fmt.Sprintf(
 			"Preparing match region (%s, %dx%d)",
 			mode, cw, ch,
