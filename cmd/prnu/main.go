@@ -18,8 +18,17 @@ import (
 	"github.com/yarlson/pin"
 )
 
+/*
+Helper function to return smallest integer
+*/
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func main() {
-	// ---- BASIC ARG CHECK ----
 	if len(os.Args) < 2 {
 		cli.PrintUsage()
 		os.Exit(2)
@@ -27,13 +36,9 @@ func main() {
 
 	switch os.Args[1] {
 
-	// ============================================================
-	// ======================== ENROLL =============================
-	// ============================================================
 	case "enroll":
 		enrollCmd := flag.NewFlagSet("enroll", flag.ExitOnError)
 
-		// ---- CLI FLAGS ----
 		camera := enrollCmd.String("camera", "", "camera id/name (required)")
 		inDir := enrollCmd.String("in", "", "input folder of enrollment images (required)")
 		outDir := enrollCmd.String("out", "./db", "output db folder (default ./db)")
@@ -41,7 +46,6 @@ func main() {
 
 		enrollCmd.Parse(os.Args[2:])
 
-		// ---- REQUIRED FLAGS CHECK ----
 		if *camera == "" || *inDir == "" {
 			fmt.Println("missing required flags: --camera and --in")
 			fmt.Println()
@@ -49,20 +53,17 @@ func main() {
 			os.Exit(2)
 		}
 
-		// ---- CREATE OUTPUT DB DIRECTORY ----
 		if err := os.MkdirAll(*outDir, 0o755); err != nil {
 			fmt.Println("failed to create output dir:", err)
 			os.Exit(1)
 		}
 
-		// ---- CREATE CAMERA SPECIFIC DIRECTORY ----
 		camDir := filepath.Join(*outDir, *camera)
 		if err := os.MkdirAll(camDir, 0o755); err != nil {
 			fmt.Println("failed to create camera dir:", err)
 			os.Exit(1)
 		}
 
-		// ---- LIST ALL ENROLLMENT IMAGES ----
 		imageList, err := imageio.ListImages(*inDir)
 		if err != nil {
 			fmt.Println("failed to read input directory:", err)
@@ -73,15 +74,13 @@ func main() {
 			os.Exit(1)
 		}
 
-		// ---- SPINNER START ----
 		start := time.Now()
 		p := pin.New("Starting enrollment...")
 		cancel := p.Start(context.Background())
 		defer cancel()
 
-		p.UpdateMessage("Loading first image (lock width/height)...")
+		p.UpdateMessage("Loading first image to lock resolution")
 
-		// ---- LOAD FIRST IMAGE TO FIX WIDTH / HEIGHT ----
 		_, w, h, err := imageio.LoadGray(imageList[0])
 		if err != nil {
 			p.Stop("Enroll failed")
@@ -89,17 +88,11 @@ func main() {
 			os.Exit(1)
 		}
 
-		// ---- PROCESS ALL IMAGES AND COLLECT RESIDUALS ----
-		p.UpdateMessage(fmt.Sprintf("Computing residuals (0/%d)...", len(imageList)))
-
 		residuals := make([][]float32, 0, len(imageList))
-		total := len(imageList)
 
-		for idx, path := range imageList {
-			// progress update
-			p.UpdateMessage(fmt.Sprintf("Processing %d/%d: %s", idx+1, total, filepath.Base(path)))
+		for i, path := range imageList {
+			p.UpdateMessage(fmt.Sprintf("Processing %d/%d: %s", i+1, len(imageList), filepath.Base(path)))
 
-			// load grayscale image
 			img, wN, hN, err := imageio.LoadGray(path)
 			if err != nil {
 				p.Stop("Enroll failed")
@@ -107,14 +100,12 @@ func main() {
 				os.Exit(1)
 			}
 
-			// enforce identical resolution across all images
 			if w != wN || h != hN {
 				p.Stop("Enroll failed")
 				fmt.Printf("dimension mismatch for %s: got %dx%d expected %dx%d\n", path, wN, hN, w, h)
 				os.Exit(1)
 			}
 
-			// apply gaussian denoising
 			blur, err := denoise.GaussianBlurGray(img, wN, hN, float32(*sigma))
 			if err != nil {
 				p.Stop("Enroll failed")
@@ -122,7 +113,6 @@ func main() {
 				os.Exit(1)
 			}
 
-			// compute noise residual
 			res, err := denoise.ResidualGray(img, blur)
 			if err != nil {
 				p.Stop("Enroll failed")
@@ -133,8 +123,7 @@ func main() {
 			residuals = append(residuals, res)
 		}
 
-		// ---- ESTIMATE CAMERA FINGERPRINT ----
-		p.UpdateMessage("Estimating fingerprint (averaging residuals)...")
+		p.UpdateMessage("Estimating fingerprint")
 
 		fp, err := fingerprint.Estimate(residuals)
 		if err != nil {
@@ -143,15 +132,9 @@ func main() {
 			os.Exit(1)
 		}
 
-		// ---- WRITE META INFORMATION ----
-		p.UpdateMessage("Writing meta.json and fingerprint.bin...")
-		var version int = 1
-		existingMeta, err := store.ReadMeta(camDir)
-		if err != nil {
-			p.UpdateMessage("No existing meta found for device")
-		} else {
-			p.UpdateMessage("Existing camera ID found, bumping version")
-			version = existingMeta.Version + 1
+		version := 1
+		if oldMeta, err := store.ReadMeta(camDir); err == nil {
+			version = oldMeta.Version + 1
 		}
 
 		meta := store.Meta{
@@ -171,18 +154,16 @@ func main() {
 			os.Exit(1)
 		}
 
-		// ---- WRITE FINGERPRINT TO DISK ----
 		if err := store.WriteFingerprint(camDir, fp); err != nil {
 			p.Stop("Enroll failed")
 			fmt.Println("failed to write fingerprint:", err)
 			os.Exit(1)
 		}
 
-		// ---- SPINNER STOP ----
 		elapsed := time.Since(start).Round(time.Millisecond)
-		p.Stop(fmt.Sprintf("Enroll complete (%d images, %dx%d, sigma=%.2f) in %s", total, w, h, *sigma, elapsed))
+		p.Stop(fmt.Sprintf("Enroll complete (%d images, %dx%d, sigma=%.2f) in %s",
+			len(imageList), w, h, *sigma, elapsed))
 
-		// ---- ENROLL SUMMARY ----
 		fmt.Println("enroll ok")
 		fmt.Println("camera:", *camera)
 		fmt.Println("input:", *inDir)
@@ -191,88 +172,129 @@ func main() {
 		fmt.Println("sigma:", *sigma)
 		fmt.Println("db:", camDir)
 
-	// ============================================================
-	// ======================== VERIFY ==============================
-	// ============================================================
 	case "verify":
 		verifyCmd := flag.NewFlagSet("verify", flag.ExitOnError)
 
-		// ---- CLI FLAGS ----
 		camera := verifyCmd.String("camera", "", "camera id/name (required)")
 		dbDir := verifyCmd.String("db", "./db", "db folder (default ./db)")
-		img := verifyCmd.String("img", "", "test image path (required)")
+		imgPath := verifyCmd.String("img", "", "test image path (required)")
 
 		verifyCmd.Parse(os.Args[2:])
 
-		// ---- REQUIRED FLAGS CHECK ----
-		if *camera == "" || *img == "" {
+		if *camera == "" || *imgPath == "" {
 			fmt.Println("missing required flags: --camera and --img")
 			fmt.Println()
 			cli.PrintVerifyUsage()
 			os.Exit(2)
 		}
 
-		// ---- LOAD META ----
+		start := time.Now()
+		p := pin.New("Starting verification...")
+		cancel := p.Start(context.Background())
+		defer cancel()
+
+		p.UpdateMessage("Loading camera metadata")
+
 		camDir := filepath.Join(*dbDir, *camera)
 		meta, err := store.ReadMeta(camDir)
 		if err != nil {
+			p.Stop("Verify failed")
 			fmt.Println("failed to read camera meta:", err)
 			os.Exit(1)
 		}
 
-		// ---- LOAD FINGERPRINT ----
+		p.UpdateMessage("Loading stored fingerprint")
+
 		fp, err := store.ReadFingerprint(camDir)
 		if err != nil {
+			p.Stop("Verify failed")
 			fmt.Println("failed to read fingerprint:", err)
 			os.Exit(1)
 		}
 
-		// ---- LOAD TEST IMAGE ----
-		imgPix, w, h, err := imageio.LoadGray(*img)
+		p.UpdateMessage("Loading test image")
+
+		imgPix, w, h, err := imageio.LoadGray(*imgPath)
 		if err != nil {
+			p.Stop("Verify failed")
 			fmt.Println("failed to load test image:", err)
 			os.Exit(1)
 		}
 
-		// ---- DIM CHECK (MUST MATCH ENROLL) ----
-		if w != meta.Width || h != meta.Height {
-			fmt.Printf("dimension mismatch: img=%dx%d enrolled=%dx%d\n", w, h, meta.Width, meta.Height)
-			os.Exit(1)
+		enW, enH := meta.Width, meta.Height
+
+		cw := minInt(enW, w)
+		ch := minInt(enH, h)
+
+		maxTile := 2048
+		if cw > maxTile {
+			cw = maxTile
 		}
-		if len(fp) != w*h {
-			fmt.Printf("fingerprint length mismatch: fp=%d expected=%d\n", len(fp), w*h)
+		if ch > maxTile {
+			ch = maxTile
+		}
+
+		mode := "exact"
+		if w != enW || h != enH {
+			mode = "center-crop"
+		}
+
+		p.UpdateMessage(fmt.Sprintf(
+			"Preparing match region (%s, %dx%d)",
+			mode, cw, ch,
+		))
+
+		fpCrop, err := imageio.CropCenterGray(fp, enW, enH, cw, ch)
+		if err != nil {
+			p.Stop("Verify failed")
+			fmt.Println("failed to crop fingerprint:", err)
 			os.Exit(1)
 		}
 
-		// ---- COMPUTE RESIDUAL ----
-		blur, err := denoise.GaussianBlurGray(imgPix, w, h, meta.Sigma)
+		imgCrop, err := imageio.CropCenterGray(imgPix, w, h, cw, ch)
 		if err != nil {
+			p.Stop("Verify failed")
+			fmt.Println("failed to crop test image:", err)
+			os.Exit(1)
+		}
+
+		p.UpdateMessage("Computing residual")
+
+		blur, err := denoise.GaussianBlurGray(imgCrop, cw, ch, meta.Sigma)
+		if err != nil {
+			p.Stop("Verify failed")
 			fmt.Println("failed to blur test image:", err)
 			os.Exit(1)
 		}
 
-		res, err := denoise.ResidualGray(imgPix, blur)
+		res, err := denoise.ResidualGray(imgCrop, blur)
 		if err != nil {
+			p.Stop("Verify failed")
 			fmt.Println("failed to compute residual:", err)
 			os.Exit(1)
 		}
 
-		// ---- SCORE ----
-		score, err := metrics.PearsonCorr(fp, res)
+		p.UpdateMessage("Computing similarity score")
+
+		score, err := metrics.PearsonCorr(fpCrop, res)
 		if err != nil {
+			p.Stop("Verify failed")
 			fmt.Println("failed to compute score:", err)
 			os.Exit(1)
 		}
 
+		elapsed := time.Since(start).Round(time.Millisecond)
+		p.Stop(fmt.Sprintf("Verify complete in %s", elapsed))
+
 		fmt.Println("verify ok")
 		fmt.Println("camera:", meta.CameraID)
-		fmt.Println("img:", *img)
-		fmt.Println("score (pearson):", score)
 		fmt.Println("db:", camDir)
+		fmt.Println("enrolled resolution:", fmt.Sprintf("%dx%d", enW, enH))
+		fmt.Println("test resolution:", fmt.Sprintf("%dx%d", w, h))
+		fmt.Println("match mode:", mode)
+		fmt.Println("region used:", fmt.Sprintf("%dx%d", cw, ch))
+		fmt.Println("score (pearson):", score)
 
-		// ============================================================
-	// ======================== HELP ================================
-	// ============================================================
 	case "help", "-h", "--help":
 		cli.PrintUsage()
 
