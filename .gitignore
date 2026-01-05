@@ -37,3 +37,6 @@ ShutterTrace
 
 # datasets directory
 datasets
+
+# fingerprint db default
+db
