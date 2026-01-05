@@ -12,6 +12,7 @@ import (
 	"github.com/ARJ2211/ShutterTrace/internal/denoise"
 	"github.com/ARJ2211/ShutterTrace/internal/fingerprint"
 	"github.com/ARJ2211/ShutterTrace/internal/imageio"
+	"github.com/ARJ2211/ShutterTrace/internal/metrics"
 	"github.com/ARJ2211/ShutterTrace/internal/store"
 
 	"github.com/yarlson/pin"
@@ -211,7 +212,7 @@ func main() {
 			os.Exit(2)
 		}
 
-		// ---- LOAD META (FINGERPRINT + PARAMS) ----
+		// ---- LOAD META ----
 		camDir := filepath.Join(*dbDir, *camera)
 		meta, err := store.ReadMeta(camDir)
 		if err != nil {
@@ -219,14 +220,57 @@ func main() {
 			os.Exit(1)
 		}
 
-		// ---- TODO: ADD VERIFY PIPELINE ----
-		fmt.Println("verify stub ok")
+		// ---- LOAD FINGERPRINT ----
+		fp, err := store.ReadFingerprint(camDir)
+		if err != nil {
+			fmt.Println("failed to read fingerprint:", err)
+			os.Exit(1)
+		}
+
+		// ---- LOAD TEST IMAGE ----
+		imgPix, w, h, err := imageio.LoadGray(*img)
+		if err != nil {
+			fmt.Println("failed to load test image:", err)
+			os.Exit(1)
+		}
+
+		// ---- DIM CHECK (MUST MATCH ENROLL) ----
+		if w != meta.Width || h != meta.Height {
+			fmt.Printf("dimension mismatch: img=%dx%d enrolled=%dx%d\n", w, h, meta.Width, meta.Height)
+			os.Exit(1)
+		}
+		if len(fp) != w*h {
+			fmt.Printf("fingerprint length mismatch: fp=%d expected=%d\n", len(fp), w*h)
+			os.Exit(1)
+		}
+
+		// ---- COMPUTE RESIDUAL ----
+		blur, err := denoise.GaussianBlurGray(imgPix, w, h, meta.Sigma)
+		if err != nil {
+			fmt.Println("failed to blur test image:", err)
+			os.Exit(1)
+		}
+
+		res, err := denoise.ResidualGray(imgPix, blur)
+		if err != nil {
+			fmt.Println("failed to compute residual:", err)
+			os.Exit(1)
+		}
+
+		// ---- SCORE ----
+		score, err := metrics.PearsonCorr(fp, res)
+		if err != nil {
+			fmt.Println("failed to compute score:", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("verify ok")
 		fmt.Println("camera:", meta.CameraID)
 		fmt.Println("img:", *img)
+		fmt.Println("score (pearson):", score)
 		fmt.Println("db:", camDir)
-		fmt.Println("note: scoring not implemented yet")
 
-	// ============================================================
+		// ============================================================
 	// ======================== HELP ================================
 	// ============================================================
 	case "help", "-h", "--help":

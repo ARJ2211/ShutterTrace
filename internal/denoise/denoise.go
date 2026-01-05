@@ -8,8 +8,8 @@ import (
 /*
 This function is responsible to build a normalized
 1D Gaussian kernal.
-The radius is chose as ceil(3*sigma) which captures 9
-9% of gaussian mass.
+The radius is chose as ceil(3*sigma) which captures
+99% of gaussian mass.
 */
 func GaussianKernel1D(sigma float32) ([]float32, int, error) {
 	if sigma <= 0 {
