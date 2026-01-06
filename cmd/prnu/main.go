@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ARJ2211/ShutterTrace/internal/cli"
@@ -27,7 +28,7 @@ Helper function to stop process exec
 */
 func stopProcessExec(p Stoppable, failMsg, msg string) {
 	if p != nil {
-		p.Stop(failMsg)
+		p.Stop(failMsg, msg)
 	}
 	fmt.Println(msg)
 	os.Exit(1)
@@ -41,6 +42,23 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func min3(a, b, c int) int {
+	m := a
+	if b < m {
+		m = b
+	}
+	if c < m {
+		m = c
+	}
+	return m
+}
+
+type tileSpec struct {
+	name string
+	x0   int
+	y0   int
 }
 
 func main() {
@@ -98,9 +116,7 @@ func main() {
 
 		_, w, h, err := imageio.LoadGray(imageList[0])
 		if err != nil {
-			p.Stop("Enroll failed")
-			fmt.Println("failed to load first image:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("failed to load first image: %v", err))
 		}
 
 		residuals := make([][]float32, 0, len(imageList))
@@ -110,29 +126,25 @@ func main() {
 
 			img, wN, hN, err := imageio.LoadGray(path)
 			if err != nil {
-				p.Stop("Enroll failed")
-				fmt.Println("error loading image:", path, err)
-				os.Exit(1)
+				stopProcessExec(p, "Enroll failed", fmt.Sprintf("error loading image %s: %v", path, err))
 			}
 
 			if w != wN || h != hN {
-				p.Stop("Enroll failed")
-				fmt.Printf("dimension mismatch for %s: got %dx%d expected %dx%d\n", path, wN, hN, w, h)
-				os.Exit(1)
+				stopProcessExec(
+					p,
+					"Enroll failed",
+					fmt.Sprintf("dimension mismatch for %s: got %dx%d expected %dx%d", path, wN, hN, w, h),
+				)
 			}
 
 			blur, err := denoise.GaussianBlurGray(img, wN, hN, float32(*sigma))
 			if err != nil {
-				p.Stop("Enroll failed")
-				fmt.Println("error blurring image:", path, err)
-				os.Exit(1)
+				stopProcessExec(p, "Enroll failed", fmt.Sprintf("error blurring image %s: %v", path, err))
 			}
 
 			res, err := denoise.ResidualGray(img, blur)
 			if err != nil {
-				p.Stop("Enroll failed")
-				fmt.Println("error computing residual:", path, err)
-				os.Exit(1)
+				stopProcessExec(p, "Enroll failed", fmt.Sprintf("error computing residual %s: %v", path, err))
 			}
 
 			// Post processing
@@ -153,19 +165,18 @@ func main() {
 
 		fp, err := fingerprint.Estimate(residuals)
 		if err != nil {
-			p.Stop("Enroll failed")
-			fmt.Println("failed to estimate fingerprint:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("failed to estimate fingerprint: %v", err))
 		}
+
 		// Post processing
 		if err := denoise.ZeroMean(fp); err != nil {
-			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess ZeroMean failed: %v", err))
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess fp ZeroMean failed: %v", err))
 		}
 		if err := denoise.RemoveRowColMean(fp, w, h); err != nil {
-			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess RemoveRowColMean failed: %v", err))
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess fp RemoveRowColMean failed: %v", err))
 		}
 		if err := denoise.NormalizeL2(fp); err != nil {
-			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess NormalizeL2 failed: %v", err))
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess fp NormalizeL2 failed: %v", err))
 		}
 
 		version := 1
@@ -185,20 +196,15 @@ func main() {
 		}
 
 		if err := store.WriteMeta(camDir, meta); err != nil {
-			p.Stop("Enroll failed")
-			fmt.Println("failed to write meta:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("failed to write meta: %v", err))
 		}
 
 		if err := store.WriteFingerprint(camDir, fp); err != nil {
-			p.Stop("Enroll failed")
-			fmt.Println("failed to write fingerprint:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("failed to write fingerprint: %v", err))
 		}
 
 		elapsed := time.Since(start).Round(time.Millisecond)
-		p.Stop(fmt.Sprintf("Enroll complete (%d images, %dx%d, sigma=%.2f) in %s",
-			len(imageList), w, h, *sigma, elapsed))
+		p.Stop(fmt.Sprintf("Enroll complete (%d images, %dx%d, sigma=%.2f) in %s", len(imageList), w, h, *sigma, elapsed))
 
 		fmt.Println("enroll ok")
 		fmt.Println("camera:", *camera)
@@ -234,126 +240,136 @@ func main() {
 		camDir := filepath.Join(*dbDir, *camera)
 		meta, err := store.ReadMeta(camDir)
 		if err != nil {
-			p.Stop("Verify failed")
-			fmt.Println("failed to read camera meta:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to read camera meta: %v", err))
 		}
 
 		p.UpdateMessage("Loading stored fingerprint")
 
 		fp, err := store.ReadFingerprint(camDir)
 		if err != nil {
-			p.Stop("Verify failed")
-			fmt.Println("failed to read fingerprint:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to read fingerprint: %v", err))
 		}
 
 		p.UpdateMessage("Loading test image")
 
 		imgPix, w, h, err := imageio.LoadGray(*imgPath)
 		if err != nil {
-			p.Stop("Verify failed")
-			fmt.Println("failed to load test image:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to load test image: %v", err))
 		}
 
 		enW, enH := meta.Width, meta.Height
 
-		cw := minInt(enW, w)
-		ch := minInt(enH, h)
-
-		maxTile := 2048
-		if cw > maxTile {
-			cw = maxTile
-		}
-		if ch > maxTile {
-			ch = maxTile
-		}
-
+		// Determine match mode
 		mode := "exact"
 		if w != enW || h != enH {
 			mode = "center-crop"
 		}
 
+		// Choose a common region to compare in (center-cropped on both sides)
+		commonW := minInt(enW, w)
+		commonH := minInt(enH, h)
+
+		// Cap common region for speed (keep >= tile size so corners exist)
+		commonCap := 3072
+		if commonW > commonCap {
+			commonW = commonCap
+		}
+		if commonH > commonCap {
+			commonH = commonCap
+		}
+
+		// Tile size (square)
 		tileCap := 2048
-		if cw > tileCap {
-			cw = tileCap
-		}
-		if ch > tileCap {
-			ch = tileCap
+		tile := min3(tileCap, commonW, commonH)
+
+		if mode == "exact" && (tile != enW || tile != enH) {
+			mode = "exact-tiles"
+		} else if mode == "center-crop" {
+			mode = "center-crop-tiles"
 		}
 
-		if mode == "exact" && (cw != enW || ch != enH) {
-			mode = "exact-tile"
-		}
-		if mode == "center-crop" && (cw != minInt(enW, w) || ch != minInt(enH, h)) {
-			mode = "center-crop-tile"
-		}
+		p.UpdateMessage(fmt.Sprintf("Aligning to common region (%s, %dx%d)", mode, commonW, commonH))
 
-		p.UpdateMessage(fmt.Sprintf(
-			"Preparing match region (%s, %dx%d)",
-			mode, cw, ch,
-		))
-
-		fpCrop, err := imageio.CropCenterGray(fp, enW, enH, cw, ch)
+		fpCommon, err := imageio.CropCenterGray(fp, enW, enH, commonW, commonH)
 		if err != nil {
-			p.Stop("Verify failed")
-			fmt.Println("failed to crop fingerprint:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to crop fingerprint common: %v", err))
 		}
 
-		// Post processing
-		if err := denoise.ZeroMean(fpCrop); err != nil {
-			stopProcessExec(p, "Verify failed", "could not compute zero mean")
-		}
-		if err := denoise.RemoveRowColMean(fpCrop, cw, ch); err != nil {
-			stopProcessExec(p, "Verify failed", "could not compute remove row col mean")
-		}
-		if err := denoise.NormalizeL2(fpCrop); err != nil {
-			stopProcessExec(p, "Verify failed", "could not compute l2 normalization")
-		}
-
-		imgCrop, err := imageio.CropCenterGray(imgPix, w, h, cw, ch)
+		imgCommon, err := imageio.CropCenterGray(imgPix, w, h, commonW, commonH)
 		if err != nil {
-			p.Stop("Verify failed")
-			fmt.Println("failed to crop test image:", err)
-			os.Exit(1)
+			stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to crop test image common: %v", err))
 		}
 
-		p.UpdateMessage("Computing residual")
-
-		blur, err := denoise.GaussianBlurGray(imgCrop, cw, ch, meta.Sigma)
-		if err != nil {
-			p.Stop("Verify failed")
-			fmt.Println("failed to blur test image:", err)
-			os.Exit(1)
+		tiles := []tileSpec{
+			{name: "center", x0: (commonW - tile) / 2, y0: (commonH - tile) / 2},
+			{name: "top-left", x0: 0, y0: 0},
+			{name: "top-right", x0: commonW - tile, y0: 0},
+			{name: "bottom-left", x0: 0, y0: commonH - tile},
+			{name: "bottom-right", x0: commonW - tile, y0: commonH - tile},
 		}
 
-		res, err := denoise.ResidualGray(imgCrop, blur)
-		if err != nil {
-			p.Stop("Verify failed")
-			fmt.Println("failed to compute residual:", err)
-			os.Exit(1)
-		}
+		p.UpdateMessage("Scoring tiles")
 
-		// Post processing
-		if err := denoise.ZeroMean(res); err != nil {
-			stopProcessExec(p, "Verify failed", "could not compute zero mean")
-		}
-		if err := denoise.RemoveRowColMean(res, cw, ch); err != nil {
-			stopProcessExec(p, "Verify failed", "could not compute remove row col mean")
-		}
-		if err := denoise.NormalizeL2(res); err != nil {
-			stopProcessExec(p, "Verify failed", "could not compute l2 normalization")
-		}
+		bestScore := float64(-1e9)
+		bestTile := ""
+		tileScores := make([]string, 0, len(tiles))
 
-		p.UpdateMessage("Computing similarity score")
+		for i, t := range tiles {
+			p.UpdateMessage(fmt.Sprintf("Tile %d/%d: %s", i+1, len(tiles), t.name))
 
-		score, err := metrics.PearsonCorr(fpCrop, res)
-		if err != nil {
-			p.Stop("Verify failed")
-			fmt.Println("failed to compute score:", err)
-			os.Exit(1)
+			fpTile, err := imageio.CropAtGray(fpCommon, commonW, commonH, t.x0, t.y0, tile, tile)
+			if err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to crop fingerprint tile %s: %v", t.name, err))
+			}
+
+			imgTile, err := imageio.CropAtGray(imgCommon, commonW, commonH, t.x0, t.y0, tile, tile)
+			if err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to crop test tile %s: %v", t.name, err))
+			}
+
+			blur, err := denoise.GaussianBlurGray(imgTile, tile, tile, meta.Sigma)
+			if err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("blur failed (%s): %v", t.name, err))
+			}
+
+			res, err := denoise.ResidualGray(imgTile, blur)
+			if err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("residual failed (%s): %v", t.name, err))
+			}
+
+			// Post process residual
+			if err := denoise.ZeroMean(res); err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res ZeroMean failed (%s): %v", t.name, err))
+			}
+			if err := denoise.RemoveRowColMean(res, tile, tile); err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res RemoveRowColMean failed (%s): %v", t.name, err))
+			}
+			if err := denoise.NormalizeL2(res); err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res NormalizeL2 failed (%s): %v", t.name, err))
+			}
+
+			// Post process fp tile
+			if err := denoise.ZeroMean(fpTile); err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fp ZeroMean failed (%s): %v", t.name, err))
+			}
+			if err := denoise.RemoveRowColMean(fpTile, tile, tile); err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fp RemoveRowColMean failed (%s): %v", t.name, err))
+			}
+			if err := denoise.NormalizeL2(fpTile); err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fp NormalizeL2 failed (%s): %v", t.name, err))
+			}
+
+			score, err := metrics.PearsonCorr(fpTile, res)
+			if err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("pearson failed (%s): %v", t.name, err))
+			}
+
+			tileScores = append(tileScores, fmt.Sprintf("%s=%.6f", t.name, score))
+
+			if score > bestScore {
+				bestScore = score
+				bestTile = t.name
+			}
 		}
 
 		elapsed := time.Since(start).Round(time.Millisecond)
@@ -365,8 +381,11 @@ func main() {
 		fmt.Println("enrolled resolution:", fmt.Sprintf("%dx%d", enW, enH))
 		fmt.Println("test resolution:", fmt.Sprintf("%dx%d", w, h))
 		fmt.Println("match mode:", mode)
-		fmt.Println("region used:", fmt.Sprintf("%dx%d", cw, ch))
-		fmt.Println("score (pearson):", score)
+		fmt.Println("common region:", fmt.Sprintf("%dx%d", commonW, commonH))
+		fmt.Println("tile used:", fmt.Sprintf("%dx%d", tile, tile))
+		fmt.Println("best tile:", bestTile)
+		fmt.Println("score (pearson):", bestScore)
+		fmt.Println("tile scores:", strings.Join(tileScores, ", "))
 
 	case "help", "-h", "--help":
 		cli.PrintUsage()

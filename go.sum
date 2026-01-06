@@ -1,2 +1,4 @@
 github.com/yarlson/pin v0.9.1 h1:ZfbMMTSpZw9X7ebq9QS6FAUq66PTv56S4WN4puO2HK0=
 github.com/yarlson/pin v0.9.1/go.mod h1:FC/d9PacAtwh05XzSznZWhA447uvimitjgDDl5YaVLE=
+gonum.org/v1/gonum v0.16.0 h1:5+ul4Swaf3ESvrOnidPp4GZbzf0mxVQpDCYUQE7OJfk=
+gonum.org/v1/gonum v0.16.0/go.mod h1:fef3am4MQ93R2HHpKnLk4/Tbh/s0+wqD5nfa6Pnwy4E=
