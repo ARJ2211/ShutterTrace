@@ -18,6 +18,21 @@ import (
 	"github.com/yarlson/pin"
 )
 
+type Stoppable interface {
+	Stop(msg ...string)
+}
+
+/*
+Helper function to stop process exec
+*/
+func stopProcessExec(p Stoppable, failMsg, msg string) {
+	if p != nil {
+		p.Stop(failMsg)
+	}
+	fmt.Println(msg)
+	os.Exit(1)
+}
+
 /*
 Helper function to return smallest integer
 */
@@ -120,6 +135,17 @@ func main() {
 				os.Exit(1)
 			}
 
+			// Post processing
+			if err := denoise.ZeroMean(res); err != nil {
+				stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess ZeroMean failed: %v", err))
+			}
+			if err := denoise.RemoveRowColMean(res, wN, hN); err != nil {
+				stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess RemoveRowColMean failed: %v", err))
+			}
+			if err := denoise.NormalizeL2(res); err != nil {
+				stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess NormalizeL2 failed: %v", err))
+			}
+
 			residuals = append(residuals, res)
 		}
 
@@ -130,6 +156,16 @@ func main() {
 			p.Stop("Enroll failed")
 			fmt.Println("failed to estimate fingerprint:", err)
 			os.Exit(1)
+		}
+		// Post processing
+		if err := denoise.ZeroMean(fp); err != nil {
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess ZeroMean failed: %v", err))
+		}
+		if err := denoise.RemoveRowColMean(fp, w, h); err != nil {
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess RemoveRowColMean failed: %v", err))
+		}
+		if err := denoise.NormalizeL2(fp); err != nil {
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess NormalizeL2 failed: %v", err))
 		}
 
 		version := 1
@@ -266,6 +302,17 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Post processing
+		if err := denoise.ZeroMean(fpCrop); err != nil {
+			stopProcessExec(p, "Verify failed", "could not compute zero mean")
+		}
+		if err := denoise.RemoveRowColMean(fpCrop, cw, ch); err != nil {
+			stopProcessExec(p, "Verify failed", "could not compute remove row col mean")
+		}
+		if err := denoise.NormalizeL2(fpCrop); err != nil {
+			stopProcessExec(p, "Verify failed", "could not compute l2 normalization")
+		}
+
 		imgCrop, err := imageio.CropCenterGray(imgPix, w, h, cw, ch)
 		if err != nil {
 			p.Stop("Verify failed")
@@ -287,6 +334,17 @@ func main() {
 			p.Stop("Verify failed")
 			fmt.Println("failed to compute residual:", err)
 			os.Exit(1)
+		}
+
+		// Post processing
+		if err := denoise.ZeroMean(res); err != nil {
+			stopProcessExec(p, "Verify failed", "could not compute zero mean")
+		}
+		if err := denoise.RemoveRowColMean(res, cw, ch); err != nil {
+			stopProcessExec(p, "Verify failed", "could not compute remove row col mean")
+		}
+		if err := denoise.NormalizeL2(res); err != nil {
+			stopProcessExec(p, "Verify failed", "could not compute l2 normalization")
 		}
 
 		p.UpdateMessage("Computing similarity score")
