@@ -61,6 +61,22 @@ type tileSpec struct {
 	y0   int
 }
 
+/*
+Helper to normalize metric flag
+*/
+func normalizeMetric(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return "pearson"
+	}
+	switch s {
+	case "pearson", "pce", "both":
+		return s
+	default:
+		return "pearson"
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		cli.PrintUsage()
@@ -220,6 +236,7 @@ func main() {
 		camera := verifyCmd.String("camera", "", "camera id/name (required)")
 		dbDir := verifyCmd.String("db", "./db", "db folder (default ./db)")
 		imgPath := verifyCmd.String("img", "", "test image path (required)")
+		metricFlag := verifyCmd.String("metric", "pearson", "metric: pearson | pce | both (default pearson)")
 
 		verifyCmd.Parse(os.Args[2:])
 
@@ -229,6 +246,8 @@ func main() {
 			cli.PrintVerifyUsage()
 			os.Exit(2)
 		}
+
+		metric := normalizeMetric(*metricFlag)
 
 		start := time.Now()
 		p := pin.New("Starting verification...")
@@ -259,17 +278,14 @@ func main() {
 
 		enW, enH := meta.Width, meta.Height
 
-		// Determine match mode
 		mode := "exact"
 		if w != enW || h != enH {
 			mode = "center-crop"
 		}
 
-		// Choose a common region to compare in (center-cropped on both sides)
 		commonW := minInt(enW, w)
 		commonH := minInt(enH, h)
 
-		// Cap common region for speed (keep >= tile size so corners exist)
 		commonCap := 3072
 		if commonW > commonCap {
 			commonW = commonCap
@@ -278,7 +294,6 @@ func main() {
 			commonH = commonCap
 		}
 
-		// Tile size (square)
 		tileCap := 2048
 		tile := min3(tileCap, commonW, commonH)
 
@@ -310,8 +325,11 @@ func main() {
 
 		p.UpdateMessage("Scoring tiles")
 
-		bestScore := float64(-1e9)
-		bestTile := ""
+		bestPearson := float64(-1e9)
+		bestPCE := float64(-1e9)
+		bestTileByPearson := ""
+		bestTileByPCE := ""
+
 		tileScores := make([]string, 0, len(tiles))
 
 		for i, t := range tiles {
@@ -359,16 +377,52 @@ func main() {
 				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fp NormalizeL2 failed (%s): %v", t.name, err))
 			}
 
-			score, err := metrics.PearsonCorr(fpTile, res)
-			if err != nil {
-				stopProcessExec(p, "Verify failed", fmt.Sprintf("pearson failed (%s): %v", t.name, err))
+			pearsonVal := float64(0)
+			pceVal := float64(0)
+
+			if metric == "pearson" || metric == "both" {
+				val, e := metrics.PearsonCorr(fpTile, res)
+				if e != nil {
+					stopProcessExec(p, "Verify failed", fmt.Sprintf("pearson failed (%s): %v", t.name, e))
+				}
+				pearsonVal = val
+				if pearsonVal > bestPearson {
+					bestPearson = pearsonVal
+					bestTileByPearson = t.name
+				}
 			}
 
-			tileScores = append(tileScores, fmt.Sprintf("%s=%.6f", t.name, score))
+			if metric == "pce" || metric == "both" {
+				corrMap, e := metrics.NCCMapFFT(fpTile, res, tile, tile)
+				if e != nil {
+					stopProcessExec(p, "Verify failed", fmt.Sprintf("fft corr failed (%s): %v", t.name, e))
+				}
 
-			if score > bestScore {
-				bestScore = score
-				bestTile = t.name
+				stats, e := metrics.ComputePCE(corrMap, tile, tile, 11)
+				if e != nil {
+					stopProcessExec(p, "Verify failed", fmt.Sprintf("pce failed (%s): %v", t.name, e))
+				}
+
+				// gate: if peak shift far from zero, treat it as not a match
+				// maxShift=2 is a good start for same-centered crops
+				if !metrics.IsNearZeroShift(stats, 2) {
+					stats.PCE = -1
+				}
+
+				pceVal = stats.PCE
+				if pceVal > bestPCE {
+					bestPCE = pceVal
+					bestTileByPCE = t.name
+				}
+			}
+
+			switch metric {
+			case "pearson":
+				tileScores = append(tileScores, fmt.Sprintf("%s=%.6f", t.name, pearsonVal))
+			case "pce":
+				tileScores = append(tileScores, fmt.Sprintf("%s=%.3f", t.name, pceVal))
+			default:
+				tileScores = append(tileScores, fmt.Sprintf("%s=pearson:%.6f pce:%.3f", t.name, pearsonVal, pceVal))
 			}
 		}
 
@@ -383,8 +437,23 @@ func main() {
 		fmt.Println("match mode:", mode)
 		fmt.Println("common region:", fmt.Sprintf("%dx%d", commonW, commonH))
 		fmt.Println("tile used:", fmt.Sprintf("%dx%d", tile, tile))
-		fmt.Println("best tile:", bestTile)
-		fmt.Println("score (pearson):", bestScore)
+
+		fmt.Println("metric:", metric)
+
+		switch metric {
+		case "pearson":
+			fmt.Println("best tile:", bestTileByPearson)
+			fmt.Println("score (pearson):", bestPearson)
+		case "pce":
+			fmt.Println("best tile:", bestTileByPCE)
+			fmt.Println("score (pce):", bestPCE)
+		default:
+			fmt.Println("best tile (pce):", bestTileByPCE)
+			fmt.Println("score (pce):", bestPCE)
+			fmt.Println("best tile (pearson):", bestTileByPearson)
+			fmt.Println("score (pearson):", bestPearson)
+		}
+
 		fmt.Println("tile scores:", strings.Join(tileScores, ", "))
 
 	case "help", "-h", "--help":
