@@ -10,4 +10,4 @@ tidy:
 	go mod tidy
 
 test:
-	go test ./...
+	go test ./... -v
