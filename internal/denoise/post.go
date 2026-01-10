@@ -93,3 +93,117 @@ func NormalizeL2(x []float32) error {
 	}
 	return nil
 }
+
+/*
+StdDev computes sample stddev
+*/
+func StdDev(x []float32) float32 {
+	n := len(x)
+	if n <= 1 {
+		return 0
+	}
+
+	var sum float64
+	for _, v := range x {
+		sum += float64(v)
+	}
+	mean := sum / float64(n)
+
+	var ss float64
+	for _, v := range x {
+		d := float64(v) - mean
+		ss += d * d
+	}
+
+	return float32(math.Sqrt(ss / float64(n-1)))
+}
+
+func zeroMean2DSubsample(x []float32, w, h int, yStart, yStep, xStart, xStep int) error {
+	if w <= 0 || h <= 0 || len(x) != w*h {
+		return fmt.Errorf("invalid dims")
+	}
+
+	// collect indices for this subgrid
+	ys := make([]int, 0, (h+1)/2)
+	for y := yStart; y < h; y += yStep {
+		ys = append(ys, y)
+	}
+	xs := make([]int, 0, (w+1)/2)
+	for xx := xStart; xx < w; xx += xStep {
+		xs = append(xs, xx)
+	}
+
+	if len(ys) == 0 || len(xs) == 0 {
+		return nil
+	}
+
+	// global mean over subgrid
+	var sum float64
+	var count int
+	for _, y := range ys {
+		base := y * w
+		for _, xx := range xs {
+			sum += float64(x[base+xx])
+			count++
+		}
+	}
+	if count == 0 {
+		return nil
+	}
+	globalMean := float32(sum / float64(count))
+
+	for _, y := range ys {
+		base := y * w
+		for _, xx := range xs {
+			x[base+xx] -= globalMean
+		}
+	}
+
+	// row means over subgrid
+	for _, y := range ys {
+		base := y * w
+		var rsum float64
+		for _, xx := range xs {
+			rsum += float64(x[base+xx])
+		}
+		rowMean := float32(rsum / float64(len(xs)))
+		for _, xx := range xs {
+			x[base+xx] -= rowMean
+		}
+	}
+
+	// col means over subgrid
+	for _, xx := range xs {
+		var csum float64
+		for _, y := range ys {
+			csum += float64(x[y*w+xx])
+		}
+		colMean := float32(csum / float64(len(ys)))
+		for _, y := range ys {
+			x[y*w+xx] -= colMean
+		}
+	}
+
+	return nil
+}
+
+func ZeroMeanTotal(x []float32, w, h int) error {
+	if w <= 0 || h <= 0 || len(x) != w*h {
+		return fmt.Errorf("invalid dims for ZeroMeanTotal")
+	}
+
+	if err := zeroMean2DSubsample(x, w, h, 0, 2, 0, 2); err != nil {
+		return err
+	}
+	if err := zeroMean2DSubsample(x, w, h, 1, 2, 0, 2); err != nil {
+		return err
+	}
+	if err := zeroMean2DSubsample(x, w, h, 0, 2, 1, 2); err != nil {
+		return err
+	}
+	if err := zeroMean2DSubsample(x, w, h, 1, 2, 1, 2); err != nil {
+		return err
+	}
+
+	return nil
+}
