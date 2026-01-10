@@ -23,9 +23,6 @@ type Stoppable interface {
 	Stop(msg ...string)
 }
 
-/*
-Helper function to stop process exec
-*/
 func stopProcessExec(p Stoppable, failMsg, msg string) {
 	if p != nil {
 		p.Stop(failMsg, msg)
@@ -34,9 +31,6 @@ func stopProcessExec(p Stoppable, failMsg, msg string) {
 	os.Exit(1)
 }
 
-/*
-Helper function to return smallest integer
-*/
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -61,9 +55,6 @@ type tileSpec struct {
 	y0   int
 }
 
-/*
-Helper to normalize metric flag
-*/
 func normalizeMetric(s string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" {
@@ -129,13 +120,13 @@ func main() {
 		defer cancel()
 
 		p.UpdateMessage("Loading first image to lock resolution")
-
 		_, w, h, err := imageio.LoadGray(imageList[0])
 		if err != nil {
 			stopProcessExec(p, "Enroll failed", fmt.Sprintf("failed to load first image: %v", err))
 		}
 
-		residuals := make([][]float32, 0, len(imageList))
+		imgs := make([][]float32, 0, len(imageList))
+		residualsRaw := make([][]float32, 0, len(imageList))
 
 		for i, path := range imageList {
 			p.UpdateMessage(fmt.Sprintf("Processing %d/%d: %s", i+1, len(imageList), filepath.Base(path)))
@@ -144,7 +135,6 @@ func main() {
 			if err != nil {
 				stopProcessExec(p, "Enroll failed", fmt.Sprintf("error loading image %s: %v", path, err))
 			}
-
 			if w != wN || h != hN {
 				stopProcessExec(
 					p,
@@ -163,34 +153,36 @@ func main() {
 				stopProcessExec(p, "Enroll failed", fmt.Sprintf("error computing residual %s: %v", path, err))
 			}
 
-			// Post processing
-			if err := denoise.ZeroMean(res); err != nil {
-				stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess ZeroMean failed: %v", err))
-			}
-			if err := denoise.RemoveRowColMean(res, wN, hN); err != nil {
-				stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess RemoveRowColMean failed: %v", err))
-			}
-			if err := denoise.NormalizeL2(res); err != nil {
-				stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess NormalizeL2 failed: %v", err))
-			}
-
-			residuals = append(residuals, res)
+			// IMPORTANT:
+			// For fingerprint estimation we want the "raw" residual (before L2 norm),
+			// and then we apply ZeroMeanTotal + WienerDFT on the final fingerprint.
+			imgs = append(imgs, img)
+			residualsRaw = append(residualsRaw, res)
 		}
 
-		p.UpdateMessage("Estimating fingerprint")
+		p.UpdateMessage("Estimating weighted fingerprint (RPsum/(NN+1))")
 
-		fp, err := fingerprint.Estimate(residuals)
+		fp, err := fingerprint.EstimateWeighted(imgs, residualsRaw, w, h)
 		if err != nil {
 			stopProcessExec(p, "Enroll failed", fmt.Sprintf("failed to estimate fingerprint: %v", err))
 		}
 
-		// Post processing
-		if err := denoise.ZeroMean(fp); err != nil {
-			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess fp ZeroMean failed: %v", err))
+		// Post-processing (PRNU toolbox style)
+		if err := denoise.ZeroMeanTotal(fp, w, h); err != nil {
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess fp ZeroMeanTotal failed: %v", err))
 		}
-		if err := denoise.RemoveRowColMean(fp, w, h); err != nil {
-			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess fp RemoveRowColMean failed: %v", err))
+
+		s := denoise.StdDev(fp)
+		if s <= 0 {
+			stopProcessExec(p, "Enroll failed", "postprocess fp StdDev is zero")
 		}
+
+		fp2, err := denoise.WienerDFT(fp, w, h, s)
+		if err != nil {
+			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess fp WienerDFT failed: %v", err))
+		}
+		fp = fp2
+
 		if err := denoise.NormalizeL2(fp); err != nil {
 			stopProcessExec(p, "Enroll failed", fmt.Sprintf("postprocess fp NormalizeL2 failed: %v", err))
 		}
@@ -207,14 +199,13 @@ func main() {
 			Height:     h,
 			ColorMode:  "grayscale",
 			DenoiseAlg: "gaussian",
-			Notes:      "fingerprint computed by averaging gaussian residuals",
+			Notes:      "fingerprint computed by RPsum/(NN+1) + ZeroMeanTotal + WienerDFT",
 			Sigma:      float32(*sigma),
 		}
 
 		if err := store.WriteMeta(camDir, meta); err != nil {
 			stopProcessExec(p, "Enroll failed", fmt.Sprintf("failed to write meta: %v", err))
 		}
-
 		if err := store.WriteFingerprint(camDir, fp); err != nil {
 			stopProcessExec(p, "Enroll failed", fmt.Sprintf("failed to write fingerprint: %v", err))
 		}
@@ -263,14 +254,12 @@ func main() {
 		}
 
 		p.UpdateMessage("Loading stored fingerprint")
-
 		fp, err := store.ReadFingerprint(camDir)
 		if err != nil {
 			stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to read fingerprint: %v", err))
 		}
 
 		p.UpdateMessage("Loading test image")
-
 		imgPix, w, h, err := imageio.LoadGray(*imgPath)
 		if err != nil {
 			stopProcessExec(p, "Verify failed", fmt.Sprintf("failed to load test image: %v", err))
@@ -355,26 +344,39 @@ func main() {
 				stopProcessExec(p, "Verify failed", fmt.Sprintf("residual failed (%s): %v", t.name, err))
 			}
 
-			// Post process residual
-			if err := denoise.ZeroMean(res); err != nil {
-				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res ZeroMean failed (%s): %v", t.name, err))
+			// Post-process residual (PRNU toolbox style)
+			if err := denoise.ZeroMeanTotal(res, tile, tile); err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res ZeroMeanTotal failed (%s): %v", t.name, err))
 			}
-			if err := denoise.RemoveRowColMean(res, tile, tile); err != nil {
-				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res RemoveRowColMean failed (%s): %v", t.name, err))
+			rs := denoise.StdDev(res)
+			if rs <= 0 {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res StdDev zero (%s)", t.name))
 			}
+			res2, err := denoise.WienerDFT(res, tile, tile, rs)
+			if err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res WienerDFT failed (%s): %v", t.name, err))
+			}
+			res = res2
 			if err := denoise.NormalizeL2(res); err != nil {
 				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess res NormalizeL2 failed (%s): %v", t.name, err))
 			}
 
-			// Post process fp tile
-			if err := denoise.ZeroMean(fpTile); err != nil {
-				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fp ZeroMean failed (%s): %v", t.name, err))
+			// fingerprint tile should already be stored post-processed and L2-normalized,
+			// but cropping changes mean/border balance slightly, so re-normalize here.
+			if err := denoise.ZeroMeanTotal(fpTile, tile, tile); err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fpTile ZeroMeanTotal failed (%s): %v", t.name, err))
 			}
-			if err := denoise.RemoveRowColMean(fpTile, tile, tile); err != nil {
-				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fp RemoveRowColMean failed (%s): %v", t.name, err))
+			fs := denoise.StdDev(fpTile)
+			if fs <= 0 {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fpTile StdDev zero (%s)", t.name))
 			}
+			fp2, err := denoise.WienerDFT(fpTile, tile, tile, fs)
+			if err != nil {
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fpTile WienerDFT failed (%s): %v", t.name, err))
+			}
+			fpTile = fp2
 			if err := denoise.NormalizeL2(fpTile); err != nil {
-				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fp NormalizeL2 failed (%s): %v", t.name, err))
+				stopProcessExec(p, "Verify failed", fmt.Sprintf("postprocess fpTile NormalizeL2 failed (%s): %v", t.name, err))
 			}
 
 			pearsonVal := float64(0)
@@ -403,8 +405,7 @@ func main() {
 					stopProcessExec(p, "Verify failed", fmt.Sprintf("pce failed (%s): %v", t.name, e))
 				}
 
-				// gate: if peak shift far from zero, treat it as not a match
-				// maxShift=2 is a good start for same-centered crops
+				// Gate: keep it, but you can relax to 4 while debugging.
 				if !metrics.IsNearZeroShift(stats, 2) {
 					stats.PCE = -1
 				}
@@ -437,7 +438,6 @@ func main() {
 		fmt.Println("match mode:", mode)
 		fmt.Println("common region:", fmt.Sprintf("%dx%d", commonW, commonH))
 		fmt.Println("tile used:", fmt.Sprintf("%dx%d", tile, tile))
-
 		fmt.Println("metric:", metric)
 
 		switch metric {
