@@ -1,6 +1,10 @@
 package fingerprint
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/ARJ2211/ShutterTrace/internal/denoise"
+)
 
 /*
 This function is responsible for computing
@@ -8,33 +12,47 @@ the average fingerprint from residual noise
 samples. Each residual is a flat slice of some
 identical length.
 */
-func Estimate(residuals [][]float32) ([]float32, error) {
-	if len(residuals) == 0 {
-		return nil, fmt.Errorf("invalid residuals: empty")
+func EstimateWeighted(imgs [][]float32, residuals [][]float32, w, h int) ([]float32, error) {
+	if len(imgs) == 0 || len(residuals) == 0 {
+		return nil, fmt.Errorf("invalid inputs: empty")
+	}
+	if len(imgs) != len(residuals) {
+		return nil, fmt.Errorf("imgs/residuals mismatch: %d vs %d", len(imgs), len(residuals))
 	}
 
-	size := len(residuals[0])
-	if size == 0 {
-		return nil, fmt.Errorf("invalid residuals: zero length")
-	}
-
-	for _, residual := range residuals {
-		if len(residual) != size {
-			return nil, fmt.Errorf("residual length mismatch: got %d want %d", len(residual), size)
+	size := w * h
+	for i := range imgs {
+		if len(imgs[i]) != size {
+			return nil, fmt.Errorf("img[%d] length mismatch: got %d want %d", i, len(imgs[i]), size)
+		}
+		if len(residuals[i]) != size {
+			return nil, fmt.Errorf("residual[%d] length mismatch: got %d want %d", i, len(residuals[i]), size)
 		}
 	}
 
-	fp := make([]float32, size)
-	for _, residual := range residuals {
-		for i := 0; i < size; i++ {
-			fp[i] += residual[i]
+	RPsum := make([]float32, size)
+	NN := make([]float32, size)
+
+	for i := range imgs {
+		weights, err := denoise.WeightsGray(imgs[i], w, h)
+		if err != nil {
+			return nil, err
+		}
+
+		im := imgs[i]
+		r := residuals[i]
+
+		for p := 0; p < size; p++ {
+			RPsum[p] += r[p] * im[p]
+			wv := weights[p]
+			NN[p] += wv * wv
 		}
 	}
 
-	invN := float32(1.0) / float32(len(residuals))
-	for i := range fp {
-		fp[i] *= invN
+	K := make([]float32, size)
+	for p := 0; p < size; p++ {
+		K[p] = RPsum[p] / (NN[p] + 1.0)
 	}
 
-	return fp, nil
+	return K, nil
 }
