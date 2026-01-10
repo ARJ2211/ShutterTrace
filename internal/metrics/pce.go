@@ -60,11 +60,14 @@ func ComputePCE(corr []float64, w, h int, excludeRadius int) (PCEStats, error) {
 		excludeRadius = 0
 	}
 
-	// ---- find peak ----
+	// find peak by absolute value
 	peak := corr[0]
+	peakAbs := math.Abs(corr[0])
 	peakIdx := 0
 	for i := 1; i < len(corr); i++ {
-		if corr[i] > peak {
+		a := math.Abs(corr[i])
+		if a > peakAbs {
+			peakAbs = a
 			peak = corr[i]
 			peakIdx = i
 		}
@@ -72,7 +75,7 @@ func ComputePCE(corr []float64, w, h int, excludeRadius int) (PCEStats, error) {
 	px := peakIdx % w
 	py := peakIdx / w
 
-	// ---- compute mean energy excluding circular window around peak ----
+	// mean energy excluding window
 	var sum float64
 	var count int
 
@@ -80,8 +83,6 @@ func ComputePCE(corr []float64, w, h int, excludeRadius int) (PCEStats, error) {
 		dy := circDist(y, py, h)
 		for x := 0; x < w; x++ {
 			dx := circDist(x, px, w)
-
-			// exclude a (2r+1)x(2r+1) box, but circular
 			if dx <= excludeRadius && dy <= excludeRadius {
 				continue
 			}
@@ -102,15 +103,17 @@ func ComputePCE(corr []float64, w, h int, excludeRadius int) (PCEStats, error) {
 	}
 
 	pce := (peak * peak) / meanEnergy
+	if peak < 0 {
+		pce = -pce
+	}
 
-	// ---- wrapped shift (circular corr) ----
 	shiftX := px
 	if shiftX > w/2 {
-		shiftX = shiftX - w
+		shiftX -= w
 	}
 	shiftY := py
 	if shiftY > h/2 {
-		shiftY = shiftY - h
+		shiftY -= h
 	}
 
 	if math.IsNaN(pce) || math.IsInf(pce, 0) {
