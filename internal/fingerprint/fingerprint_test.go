@@ -28,7 +28,7 @@ func TestEstimate_BasicAverage(t *testing.T) {
 }
 
 func TestEstimate_Empty(t *testing.T) {
-	_, err := Estimate(nil)
+	_, err := EstimateWeighted(nil)
 	if err == nil {
 		t.Fatalf("expected error for empty residuals")
 	}
@@ -39,7 +39,7 @@ func TestEstimate_LengthMismatch(t *testing.T) {
 		{1, 2, 3},
 		{1, 2},
 	}
-	_, err := Estimate(residuals)
+	_, err := EstimateWeighted(residuals)
 	if err == nil {
 		t.Fatalf("expected error for length mismatch")
 	}
@@ -50,7 +50,7 @@ func TestEstimate_ZeroLength(t *testing.T) {
 		{},
 		{},
 	}
-	_, err := Estimate(residuals)
+	_, err := EstimateWeighted(residuals)
 	if err == nil {
 		t.Fatalf("expected error for zero-length residuals")
 	}
