@@ -40,7 +40,7 @@ That is expected and part of the learning.
 ./ShutterTrace verify --camera iphone_14 --img ./datasets/test/test.jpg --metric both
 ```
 
-## Disclaimer
+## Disclaimer.
 
 This is not a court-ready forensic tool.
 It is a research and learning project.
